@@ -1,0 +1,165 @@
+#include "bsp.h"
+
+            NAME Main
+            PUBLIC main, state, lcd_col, lcd_row, delay_ret_add, loop_cnt
+            PUBLIC str_pwm, str_sin, str_tri, str_vavg, rem_val, char_temp, timer_offset
+            PUBLIC zero_cnt, sample_idx, adc_buffer, zero_const, diff_const
+            PUBLIC adc_diff, loop3, zero_cnt2, str_shape, str_unit_v, VOLT_MULT
+            PUBLIC quo_val, digit_cnt, v_sum, ROUND_CONST, disp_buffer, bst, freq_fin, LK
+            
+            EXTERN lcd_init, lcd_clr, print_ch, print_str, SysConfig
+            EXTERN lcd_cmd, calc_vavg, DIV16 
+		   
+            ORG DataSegStart         
+state           DW  0
+lcd_col         DB  0
+lcd_row         DB  0
+loop_cnt        DW  0
+                EVEN         
+delay_ret_add   DW  0
+
+str_shape       DB  "SIGNAL SHAPE:"
+str_sin         DB  "sine"
+str_pwm         DB  "pwm"
+str_tri         DB  "triangle"
+str_vavg        DB  "Vavg="
+str_unit_v      DB  " [v]"
+bst             DB  "fin [Hz]="
+
+quo_val         DS16 1
+rem_val         DS16 1
+digit_cnt       DS16 1
+timer_offset    DW   0
+char_temp       DW   0
+v_sum           DW   0
+ROUND_CONST     DW   0x0096
+first_samp      DW   0
+LK              DW   0
+freq_fin        DW   0
+
+zero_cnt        DW   0     
+sample_idx      DW   0
+adc_buffer      DS16 16          ; Safely allocated 16 words instead of 0300h hardcode
+adc_diff        DS16 8
+zero_const      DW   1
+diff_const      DW   3
+loop3           DW   0
+zero_cnt2       DW   0
+K_idx           DW   0
+VOLT_MULT       DW   0x0E36      ; High precision constant (3638) replacing 0x00E3
+disp_buffer     DS16 4           
+
+            RSEG CSTACK
+            RSEG CODE
+
+main        mov     #StackTosStart, SP
+            mov     #WDTPW+WDTHOLD, &WDTCTL
+            call    #SysConfig
+            call    #lcd_init
+            bis.w   #LPM0+GIE, SR
+
+FSM         cmp     #1, state
+            jz      State1
+            cmp     #2, state
+            jz      State2
+            cmp     #3, state
+            jz      State3
+            
+            bis     #LPM0+GIE, SR       ; Sleep Mode
+            jmp     FSM
+
+;------------------------------------------------------------------------------
+State1      
+            mov.w   #INCH_3+CONSEQ_2+ADC10DIV1+ADC10SSEL_0, &ADC10CTL1 
+            mov.w   #ADC10SHT_3+MSC+REFON+ADC10ON+ADC10IE, &ADC10CTL0 
+            bis.b   #0x01, &ADC10AE0
+            
+Loop_S1     mov.b   #0x0020, &ADC10DTC1 ; 32 conversions
+            bis.w   #ENC+ADC10SC, &ADC10CTL0 
+            bis.w   #CPUOFF+GIE, SR     ; Wait for ADC ISR
+            
+            cmp     #0, state
+            jz      FSM
+            cmp     #2, state
+            jz      FSM
+            jmp     Loop_S1         
+
+;------------------------------------------------------------------------------
+State2      call    #lcd_clr
+            clr     R15
+            clr     loop_cnt
+            clr     v_sum
+            clr     K_idx
+
+            mov.w   #ADC10SHT_3+REFON+ADC10ON+ADC10IE, &ADC10CTL0 
+            mov.w   #INCH_3, &ADC10CTL1 
+            bis.b   #0x01, &ADC10AE0
+
+Loop_S2     cmp     #32, loop_cnt
+            jz      Calc_Avg
+            clr     K_idx
+            clr     R15
+            inc     loop_cnt
+            
+Inner_S2    inc     K_idx
+            bis.w   #ENC+ADC10SC, &ADC10CTL0 
+            bis.w   #CPUOFF+GIE, SR     ; Wait for ADC ISR
+            addc    &ADC10MEM, R15
+            cmp     #16, K_idx
+            jnz     Inner_S2
+            
+            push    R15
+            push    #512
+            call    #DIV16
+            pop     R11                 ; rem
+            pop     R12                 ; quo
+            add     R12, v_sum
+            jmp     Loop_S2
+            
+Calc_Avg    call    #calc_vavg
+            cmp     #0, state
+            jz      FSM
+            cmp     #3, state
+            jz      FSM
+            jmp     State2               
+
+;------------------------------------------------------------------------------
+State3      clr     freq_fin
+            clr     LK
+            inc     LK
+            mov.w   #CCIE, &TACCTL1 
+            mov.w   #0xFFFF, &TACCR1
+            mov.w   #TASSEL_2+MC_2+ID_3+TACLR, &TA0CTL 
+            
+            mov.w   #ADC10SHT_0+REFON+ADC10ON+ADC10IE, &ADC10CTL0 
+            mov.w   #ADC10SSEL_0+INCH_3, &ADC10CTL1 
+            bis.b   #0x01, &ADC10AE0
+            
+Loop_S3     bis.w   #ENC+ADC10SC, &ADC10CTL0 
+            bis.w   #CPUOFF+GIE, SR 
+            mov     #0, r12
+            cmp     #1, LK
+            jnz     Chk_S3
+            mov     &ADC10MEM, first_samp 
+            
+Chk_S3      mov     &ADC10MEM, r15
+            inc     LK
+            mov     first_samp, r14
+            cmp     r14, r15
+            jlo     Sub_Low
+            sub     r14, r15
+            cmp     #50, r15
+            JGE     Loop_S3
+            jmp     Inc_Freq
+Sub_Low     sub     r15, r14
+            cmp     #50, r14
+            JGE     Loop_S3
+Inc_Freq    inc     freq_fin
+ 
+            cmp     #0, state
+            jz      FSM
+            cmp     #2, state
+            jz      FSM
+            jmp     Loop_S3
+
+            END

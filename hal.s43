@@ -1,0 +1,105 @@
+#include "bsp.h"
+
+            MODULE HAL
+            PUBLIC lcd_init, lcd_trig, P1_ISR, TA0_ISR, SysConfig, ADC10_ISR  
+            EXTERN state, lcd_col, lcd_row, delay_ret_add, loop_cnt, GPIOconfig
+            EXTERN delay, delay1, func_shape, lcd_fin, timer_offset
+
+            RSEG CODE
+
+SysConfig   call #GPIOconfig
+            ret
+
+;----------------------------------------------------------------------- 
+; PORT1 Interrupt Service Routine (Non-Blocking)
+;-----------------------------------------------------------------------
+P1_ISR      bit.b   #0x01, &P1IFG       ; PB0 pressed?
+            jnz     Handle_PB0
+            bit.b   #0x02, &P1IFG       ; PB1 pressed?
+            jnz     Handle_PB1
+            bit.b   #0x04, &P1IFG       ; PB2 pressed?
+            jnz     Handle_PB2
+            reti          
+
+Handle_PB0  mov.w   #1, state
+            jmp     Exit_ISR
+Handle_PB1  mov.w   #2, state
+            jmp     Exit_ISR
+Handle_PB2  mov.w   #3, state
+
+Exit_ISR    bic.w   #CPUOFF, 0(SP)      ; Wake up from LPM0
+            bic.b   #0x0F, &P1IFG       ; Clear interrupt flags
+            reti
+
+;-----------------------------------------------------------------------
+TA0_ISR     mov     &TAIV, timer_offset
+            bic     #TAIFG + MC_1, &TA0CTL   
+            bic     #TAIFG + MC_3, &TA0CTL
+            bic     #CPUOFF, 0(SP)  
+            add     timer_offset, PC    ; Add Timer_A offset vector
+            reti                        ; Vector 0
+            call    #lcd_fin            ; Vector 2 - TACCR1
+            reti                        ; Vector 4 
+            reti                        ; Vector 6 
+            reti                        ; Vector 8
+            reti                        ; Vector A (Overflow)
+            reti
+
+;-----------------------------------------------------------------------            
+ADC10_ISR
+            cmp     #1, state
+            jz      State1_ADC
+            bic.w   #CPUOFF, 0(SP)      ; For State 2 & 3, wake main loop
+            reti
+
+State1_ADC  call    #func_shape
+            bic.w   #CPUOFF, 0(SP)      
+            reti
+            
+;-----------------------------------------------------------------------         
+lcd_trig    bis.b   #ENctrl, &P1OUT     ; EN=1      
+            nop
+            nop
+            bic.b   #ENctrl, &P1OUT     ; EN=0
+            ret
+
+lcd_init    bic.b   #RWctrl + RSctrl + ENctrl, &P1OUT 
+            push    #del15ms
+            call    #delay
+            mov.b   #0x3F, &P2OUT
+            call    #lcd_trig
+            push    #del5ms
+            call    #delay
+            mov.b   #0x3F, &P2OUT
+            call    #lcd_trig
+            push    #del200us
+            call    #delay
+            mov.b   #0x3F, &P2OUT
+            call    #lcd_trig
+            push    #del5ms
+            call    #delay
+            mov.b   #0x3C, &P2OUT
+            call    #lcd_trig
+            push    #del5ms
+            call    #delay
+            mov.b   #0x0F, &P2OUT
+            call    #lcd_trig
+            push    #del5ms
+            call    #delay
+            mov.b   #0x01, &P2OUT
+            call    #lcd_trig
+            push    #del5ms
+            call    #delay
+            mov.b   #0x06, &P2OUT
+            call    #lcd_trig
+            push    #del5ms
+            call    #delay
+            mov.b   #0x80, &P2OUT
+            call    #lcd_trig
+            push    #del5ms
+            call    #delay
+            mov.b   #0x02, &P2OUT
+            call    #lcd_trig
+            ret      
+
+            ENDMOD

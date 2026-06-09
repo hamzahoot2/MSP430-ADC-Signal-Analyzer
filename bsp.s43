@@ -1,0 +1,39 @@
+#include "bsp.h"
+
+            MODULE BSP
+            PUBLIC GPIOconfig
+            EXTERN main, P1_ISR, TA0_ISR, ADC10_ISR   
+            
+            RSEG CODE                    
+
+GPIOconfig 
+            mov.w   #WDTPW+WDTHOLD, &WDTCTL          ; Hold watchdog timer
+            mov.w   #CCIE, &TACCTL1                  ; TACCR1 interrupt enabled
+            mov.w   #65535, &TACCR1
+            mov.w   #TASSEL_2 + MC_0 + ID_3 + TACLR, &TA0CTL ; SMCLK
+            
+            mov.b   #0x00, PBsArrPortSel             ; P2 GPIO
+            bis.b   #0xFF, PBsArrPortDir             ; P2 LCD output
+            
+            mov.b   #0x00, ArrPortSel                ; P1 GPIO
+            bis.b   #0xE0, ArrPortDir                ; P1.5-P1.7 output (LCD control)
+            bic.b   #0x07, ArrPortDir                ; P1.0-P1.2 input (Buttons)
+            
+            bis.b   #0x07, P1IES                     ; Pull-up/down edge select
+            bis.b   #0x07, P1IE                      ; P1.0-P1.2 interrupt enable
+            bic.b   #0xFF, P1IFG                     ; Reset interrupt flags
+            ret
+
+;-------------------------------------------------------------------------------------- 
+            COMMON INTVEC                            ; Interrupt Vectors
+;--------------------------------------------------------------------------------------
+            ORG    PORT1_VECTOR
+            DW     P1_ISR
+            ORG    RESET_VECTOR
+            DW     main
+            ORG    TIMER0_A1_VECTOR
+            DW     TA0_ISR
+            ORG    ADC10_VECTOR                      ; ADC10 Vector
+            DW     ADC10_ISR
+            END
+            ENDMOD
